@@ -6,6 +6,7 @@ import flash.events.TimerEvent;
 import flash.Lib;
 import flash.media.Sound;
 import flash.media.SoundChannel;
+import flash.media.SoundMixer;
 import flash.net.URLRequest;
 import flash.net.URLStream;
 import flash.utils.ByteArray;
@@ -49,9 +50,10 @@ class AudioSprite extends EventDispatcher
 	var _isStoppingAll = false;
 	var _playQueue:Array<String>;
 	var _timer:Timer;
-	var _timerResolution:Int = 10;
-	var _timeLast:Float = 0;
-	var _timeElapsed:Float = 0;
+	var _timerResolution:Int = 1;
+	var _timeLast:Int = 0;
+	var _isLatencyCaptured = false;
+	var _latency:Int = 0;
 	
 	public function new() {
 		super();
@@ -64,6 +66,12 @@ class AudioSprite extends EventDispatcher
 		_allChannels = new ArrayChannels();
 		_playQueue = [];
 		_stoppedChannels = [];
+		
+		_timeLast = Lib.getTimer();
+		_timer = new Timer(_timerResolution);
+		_timer.addEventListener(TimerEvent.TIMER, onTimerCycles);
+		_timer.start();
+		//SoundMixer.bufferTime
 	}
 	
 	public function setTimerResolution(value:Int) {
@@ -93,11 +101,6 @@ class AudioSprite extends EventDispatcher
 		if (_playQueue.length > 0) {
 			playQueuedSounds();
 		}
-		
-		_timeLast = Lib.getTimer();
-		_timer = new Timer(_timerResolution);
-		_timer.addEventListener(TimerEvent.TIMER, onTimerCycles);
-		_timer.start();
 		
 		return true;
 	}
@@ -131,7 +134,7 @@ class AudioSprite extends EventDispatcher
 			var spriteData:SpriteData = Reflect.field(sprites, a);
 			var spriteItem = new AudioSpriteItem();
 			spriteItem.id = a;
-			spriteItem.startTime = spriteData.start * 1000;
+			spriteItem.start = spriteData.start * 1000;
 			spriteItem.duration = (spriteData.end - spriteData.start) * 1000;
 			
 			if (spriteData.loop == true) {
@@ -169,14 +172,17 @@ class AudioSprite extends EventDispatcher
 		
 		var now = Lib.getTimer();
 		var sprite:AudioSpriteItem = _mapSprites.get(id);
-		var channel = _sound.play( sprite.startTime + offsetAdjustment);
+		var channel = _sound.play( sprite.start + offsetAdjustment);
 		
 		var arrChannels = getChannelsForID(id);
 		var audioChannel = new AudioSpriteChannel();
+		var correction = 0;
+		
 		audioChannel.channel = channel;
 		audioChannel.sprite = sprite;
 		audioChannel.startedAt = now;
 		audioChannel.endAt = now + sprite.duration;
+		audioChannel.loopAt = audioChannel.endAt - correction;
 		arrChannels.push( audioChannel );
 		_allChannels.push( audioChannel );
 		
@@ -204,23 +210,26 @@ class AudioSprite extends EventDispatcher
 		_isStoppingAll = true;
 	}
 	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
 	private function onTimerCycles(e:TimerEvent):Void 
 	{
+		var channelsToRemove:ArrayChannels = [];
 		var now = Lib.getTimer();
 		var diff = now - _timeLast;
-		_timeElapsed += diff;
+		var drift:Float = diff - _timerResolution;
 		
-		var channelsToRemove:ArrayChannels = [];
 		for (channel in _allChannels) {
 			var sprite:AudioSpriteItem = channel.sprite;
-			var isStopped = _isStoppingAll || _stoppedChannels.indexOf(sprite.id)>-1;
-			if (_timeElapsed >= channel.endAt|| isStopped) {
-				channelsToRemove.push(channel);
+			var isStopped = _isStoppingAll || _stoppedChannels.indexOf(sprite.id) > -1;
+			
+			if (sprite.loop && channel.loopAt > 0 && now > (channel.loopAt-drift)) {
+				play(sprite.id, drift/2);
+				channel.loopAt = -1;
 			}
 			
-			if (!isStopped && sprite.loop) {
-				var offset = 0;
-				play(sprite.id, offset);
+			if (now >= channel.endAt || isStopped) {
+				channelsToRemove.push(channel);
 			}
 		}
 		
@@ -239,7 +248,7 @@ class AudioSprite extends EventDispatcher
 		_timeLast = now;
 	}
 	
-	////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 	public static function callLater(delay:Float, func:Dynamic, args:Array<Dynamic>=null) {
 		var timer = new Timer(delay);
@@ -259,11 +268,23 @@ class AudioSprite extends EventDispatcher
 		item.func = null;
 		item.args = null;
 	}
+	
+	public function loadFromEmbedded(jsonClass:Class<ByteArray>, mp3Class:Class<ByteArray>) 
+	{
+		var jsonData:ByteArray = Type.createEmptyInstance(jsonClass);
+		var jsonStr = jsonData.readUTFBytes(jsonData.length);
+		var mp3Data = Type.createEmptyInstance(mp3Class);
+		var mp3Sound = new Sound();
+		
+		mp3Sound.loadCompressedDataFromByteArray( mp3Data, mp3Data.length );
+		
+		loadFromDataAndSound(jsonStr, mp3Sound);
+	}
 }
 
 private class AudioSpriteItem {
 	public var id:String;
-	public var startTime:Float;
+	public var start:Float;
 	public var duration:Float;
 	public var loop:Bool = false;
 	
@@ -275,6 +296,7 @@ private class AudioSpriteChannel {
 	public var channel:SoundChannel;
 	public var startedAt:Float = 0;
 	public var endAt:Float = 0;
+	public var loopAt:Float = 0;
 	
 	public function new() { }
 	
