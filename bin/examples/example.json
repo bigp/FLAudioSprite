@@ -1,0 +1,32 @@
+{
+  "resources": [
+    "example.mp3"
+  ],
+  "spritemap": {
+    "Laser_Shoot1": {
+      "start": 0,
+      "end": 0.32031746031746033,
+      "loop": false
+    },
+    "Laser_Shoot2": {
+      "start": 2,
+      "end": 2.3203174603174603,
+      "loop": false
+    },
+    "Laser_Shoot3": {
+      "start": 4,
+      "end": 4.32031746031746,
+      "loop": false
+    },
+    "Wobble": {
+      "start": 6,
+      "end": 7.6295918367346935,
+      "loop": false
+    },
+    "trackloop": {
+      "start": 9,
+      "end": 11,
+      "loop": true
+    }
+  }
+}
