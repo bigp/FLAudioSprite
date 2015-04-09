@@ -5,9 +5,9 @@
     <movie outputType="Application" />
     <movie input="" />
     <movie path="bin\FLAudioSprite.swf" />
-    <movie fps="30" />
-    <movie width="800" />
-    <movie height="600" />
+    <movie fps="60" />
+    <movie width="320" />
+    <movie height="240" />
     <movie version="12" />
     <movie minorVersion="0" />
     <movie platform="Flash Player" />
@@ -45,7 +45,7 @@
   <!-- Executed before build -->
   <preBuildCommand />
   <!-- Executed after build -->
-  <postBuildCommand alwaysRun="False" />
+  <postBuildCommand alwaysRun="False">"$(CompilerPath)\haxe.exe" "$(ProjectDir)\build_swc.hxml"</postBuildCommand>
   <!-- Other project options -->
   <options>
     <option showHiddenPaths="False" />

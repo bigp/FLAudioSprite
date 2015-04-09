@@ -1,0 +1,8 @@
+-cp src
+-dce std
+-main Main
+--macro exclude("Main")
+--macro exclude("ExampleJSON")
+--macro exclude("ExampleMP3")
+-swf-version 11
+-swf "bin/fl_audiosprite.swc"

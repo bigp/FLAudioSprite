@@ -18,14 +18,19 @@
       "end": 4.32031746031746,
       "loop": false
     },
-    "Wobble": {
+    "trackloop2": {
       "start": 6,
-      "end": 7.6295918367346935,
+      "end": 8,
+      "loop": true
+    },
+    "Wobble": {
+      "start": 9,
+      "end": 10.629591836734694,
       "loop": false
     },
     "trackloop": {
-      "start": 9,
-      "end": 11,
+      "start": 12,
+      "end": 18.666666666666668,
       "loop": true
     }
   }

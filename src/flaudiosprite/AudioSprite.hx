@@ -6,54 +6,41 @@ import flash.events.TimerEvent;
 import flash.Lib;
 import flash.media.Sound;
 import flash.media.SoundChannel;
-import flash.media.SoundMixer;
 import flash.net.URLRequest;
 import flash.net.URLStream;
 import flash.utils.ByteArray;
+import flash.utils.Endian;
 import flash.utils.JSON;
 import flash.utils.Timer;
-import flash.net.URLStream;
-//import flaudiosprite.AudioSprite.ArrayChannels;
-
-
-typedef VoidFunc = Void->Void;
-typedef MapTimers = Map<Timer, CallLaterItem>;
-
-typedef ArrayChannels = Array<AudioSpriteChannel>;
-typedef MapItems = Map<String, AudioSpriteItem>;
-typedef MapChannels = Map<String, ArrayChannels>;
-typedef SpriteData = {
-	start:Float,
-	end:Float,
-	loop:Bool
-}
-typedef CallLaterItem = {
-	func:Dynamic,
-	args:Array<Dynamic>
-}
+import flaudiosprite.AudioSprite.AudioNavigator;
 
 /**
- * ...
+ * An AudioSprite Implementation for Flash, written in Haxe.
  * @author Pierre Chamberlain
  */
 class AudioSprite extends EventDispatcher
 {
 	static var _callLaters:MapTimers;
 	
+	var _mapLoops:MapSound;
 	var _mapSprites:MapItems;
 	var _mapChannels:MapChannels;
+	var _sortedSprites:ArraySprites;
+	var _sortedIDs:Array<String>;
 	var _allChannels:ArrayChannels;
 	var _stoppedChannels:Array<String>;
 	var _sound:Sound;
+	var _soundBytes:ByteArray;
 	var _stream:URLStream;
 	var _isReady = false;
 	var _isStoppingAll = false;
 	var _playQueue:Array<String>;
 	var _timer:Timer;
 	var _timerResolution:Int = 1;
-	var _timeLast:Int = 0;
-	var _isLatencyCaptured = false;
-	var _latency:Int = 0;
+	var _timeLast:Float = 0;
+	var _maxLength:Float = 0;
+	
+	public var navigator:AudioNavigator;
 	
 	public function new() {
 		super();
@@ -61,17 +48,17 @@ class AudioSprite extends EventDispatcher
 			_callLaters = new MapTimers();
 		}
 		
+		_mapLoops = new MapSound();
 		_mapSprites = new MapItems();
 		_mapChannels = new MapChannels();
 		_allChannels = new ArrayChannels();
 		_playQueue = [];
 		_stoppedChannels = [];
 		
-		_timeLast = Lib.getTimer();
+		_timeLast = Lib.getTimer() * 0.001;
 		_timer = new Timer(_timerResolution);
 		_timer.addEventListener(TimerEvent.TIMER, onTimerCycles);
 		_timer.start();
-		//SoundMixer.bufferTime
 	}
 	
 	public function setTimerResolution(value:Int) {
@@ -82,37 +69,53 @@ class AudioSprite extends EventDispatcher
 		trace("Not implemented yet: " + url);
 	}
 	
-	public function loadFromDataAndSound( jsonData:String, sound:Sound = null ) {
+	function loadFromDataAndSound( jsonData:String, sound:Sound = null ) {
 		_sound = sound;
 		if (_sound != null) {
 			trace("Sound resource is supplied, will override JSON data.");
 		}
 		parseJSON( jsonData );
+		navigator = new AudioNavigator(this);
 		
-		checkIfSoundReady();
+		prepareSoundLoops();
 	}
 	
-	function checkIfSoundReady() {
-		if (_sound==null) return false;
-		
-		_isReady = true;
-		dispatchEvent(new Event(Event.COMPLETE));
-		
-		if (_playQueue.length > 0) {
-			playQueuedSounds();
-		}
-		
-		return true;
-	}
-	
-	function playQueuedSounds() 
+	public function loadFromEmbedded(jsonClass:Class<ByteArray>, mp3Class:Class<ByteArray>) 
 	{
-		for (queuedID in _playQueue) {
-			play(queuedID);
-		}
+		var jsonData:ByteArray = Type.createEmptyInstance(jsonClass);
+		var jsonStr = jsonData.readUTFBytes(jsonData.length);
+		var mp3Bytes = Type.createEmptyInstance(mp3Class);
+		
+		var mp3Sound = new Sound();
+		mp3Sound.loadCompressedDataFromByteArray( mp3Bytes, mp3Bytes.length );
+		
+		loadFromDataAndSound(jsonStr, mp3Sound);
+	}
+	
+	function loadExternalSound(soundURL:String) {
+		_stream = new URLStream();
+		_stream.addEventListener(Event.COMPLETE, onExternalSoundComplete);
+		_stream.load( new URLRequest(soundURL) );
+	}
+	
+	private function onExternalSoundComplete(e:Event) {
+		trace("Sound Loaded Externally.");
+		_soundBytes = new ByteArray();
+		_stream.readBytes(_soundBytes);
+		
+		_sound = new Sound();
+		_sound.loadCompressedDataFromByteArray(_soundBytes, _soundBytes.length);
+		_stream.close();
+		_stream = null;
+		
+		prepareSoundLoops();
 	}
 	
 	function parseJSON(jsonData:String) {
+		_maxLength = 0;
+		_sortedIDs = [];
+		_sortedSprites = [];
+		
 		var data = JSON.parse( jsonData );
 		if (_sound == null) {
 			var foundMP3:String = null;
@@ -130,59 +133,118 @@ class AudioSprite extends EventDispatcher
 		}
 		
 		var sprites:Dynamic = data.spritemap;
-		for (a in Reflect.fields(sprites)) {
-			var spriteData:SpriteData = Reflect.field(sprites, a);
+		for (id in Reflect.fields(sprites)) {
+			var spriteData:SpriteData = Reflect.field(sprites, id);
 			var spriteItem = new AudioSpriteItem();
-			spriteItem.id = a;
-			spriteItem.start = spriteData.start * 1000;
-			spriteItem.duration = (spriteData.end - spriteData.start) * 1000;
+			spriteItem.id = id;
+			spriteItem.start = spriteData.start;
+			spriteItem.duration = (spriteData.end - spriteData.start);
 			
 			if (spriteData.loop == true) {
 				spriteItem.loop = true;
+				_mapLoops.set(id, new Sound());
+			}
+			
+			if (_maxLength < spriteData.end) {
+				_maxLength = spriteData.end;
 			}
 			
 			_mapSprites.set(spriteItem.id, spriteItem);
+			_sortedSprites.push( spriteItem );
+		}
+		
+		
+		_sortedSprites.sort( function(a:AudioSpriteItem, b:AudioSpriteItem):Int {
+			return Std.int((a.start - b.start) * 1000);
+		});
+		
+		for (sprite in _sortedSprites) {
+			_sortedIDs.push( sprite.id );
 		}
 	}
 	
-	function loadExternalSound(soundURL:String) {
-		_stream = new URLStream();
-		_stream.addEventListener(Event.COMPLETE, onExternalSoundComplete);
-		_stream.load( new URLRequest(soundURL) );
-	}
-	
-	private function onExternalSoundComplete(e:Event) {
-		trace("Sound Loaded Externally.");
-		var ba = new ByteArray();
-		_stream.readBytes(ba);
+	function prepareSoundLoops() {
+		var loops = _mapLoops.keys();
+		if (loops == null) return;
 		
-		_sound = new Sound();
-		_sound.loadCompressedDataFromByteArray(ba, ba.length);
-		_stream.close();
-		_stream = null;
+		if (_sound == null) {
+			trace("Cannot prepare loops without sound.");
+			return;
+		}
+		
+		var goldenOffset:UInt = (64 << 5);
+		var goldenDuration:UInt = (64 << 2);
+		var sampleRate:UInt = 44100;
+		
+		for (id in loops) {
+			var sprite:AudioSpriteItem = _mapSprites.get(id);
+			var loop:Sound = _mapLoops.get(id);
+			var sampleBytes = new ByteArray();
+			var samplesTotal:UInt = cast(sprite.duration * sampleRate + goldenDuration);
+			var samplesStart:UInt = cast(sprite.start * sampleRate + goldenOffset);
+			sampleBytes.endian = Endian.BIG_ENDIAN;
+			
+			_sound.extract(sampleBytes, samplesTotal, samplesStart);
+			sampleBytes.endian = Endian.BIG_ENDIAN;
+			
+			sampleBytes.position = 0;
+			loop.loadPCMFromByteArray(sampleBytes, samplesTotal, "float", true);
+		}
 		
 		checkIfSoundReady();
 	}
 	
-	public function play(id:String, offsetAdjustment:Float=0):Bool {
-		if (!_isReady) {
+	function checkIfSoundReady() {
+		if (_sound==null) return false;
+		
+		_isReady = true;
+		dispatchEvent(new Event(Event.COMPLETE));
+		
+		playQueuedSounds();
+		
+		return true;
+	}
+	
+	function playQueuedSounds() 
+	{
+		if (_playQueue.length == 0) return;
+		
+		for (queuedID in _playQueue) {
+			play(queuedID);
+		}
+		
+		_playQueue = [];
+	}
+	
+	public function play(id:String):Bool {
+		if (!_isReady || _isStoppingAll) {
 			_playQueue.push(id);
 			return false;
 		}
 		
-		var now = Lib.getTimer();
+		trace("Playing: " + id);
+		
 		var sprite:AudioSpriteItem = _mapSprites.get(id);
-		var channel = _sound.play( sprite.start + offsetAdjustment);
+		if (sprite == null) return false;
+		
+		var channel:SoundChannel;
+		var sound = _sound;
+		var now = Lib.getTimer() * 0.001;
+		
+		if (sprite.loop) {
+			sound = _mapLoops.get(id);
+			channel = sound.play( 0, 9999 );
+		} else {
+			channel = sound.play( sprite.start * 1000 );
+		}
 		
 		var arrChannels = getChannelsForID(id);
 		var audioChannel = new AudioSpriteChannel();
-		var correction = 0;
 		
 		audioChannel.channel = channel;
 		audioChannel.sprite = sprite;
 		audioChannel.startedAt = now;
 		audioChannel.endAt = now + sprite.duration;
-		audioChannel.loopAt = audioChannel.endAt - correction;
 		arrChannels.push( audioChannel );
 		_allChannels.push( audioChannel );
 		
@@ -210,25 +272,23 @@ class AudioSprite extends EventDispatcher
 		_isStoppingAll = true;
 	}
 	
+	public function getSprites():ArraySprites { return _sortedSprites; }
+	public function getSoundIDs():Array<String> { return _sortedIDs; }
+	public function getMaxLengthSeconds():Float { return _maxLength; }
+	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 	private function onTimerCycles(e:TimerEvent):Void 
 	{
 		var channelsToRemove:ArrayChannels = [];
-		var now = Lib.getTimer();
+		var now = Lib.getTimer() * 0.001;
 		var diff = now - _timeLast;
 		var drift:Float = diff - _timerResolution;
 		
 		for (channel in _allChannels) {
 			var sprite:AudioSpriteItem = channel.sprite;
 			var isStopped = _isStoppingAll || _stoppedChannels.indexOf(sprite.id) > -1;
-			
-			if (sprite.loop && channel.loopAt > 0 && now > (channel.loopAt-drift)) {
-				play(sprite.id, drift/2);
-				channel.loopAt = -1;
-			}
-			
-			if (now >= channel.endAt || isStopped) {
+			if ((!sprite.loop && now >= channel.endAt) || isStopped) {
 				channelsToRemove.push(channel);
 			}
 		}
@@ -246,6 +306,8 @@ class AudioSprite extends EventDispatcher
 		
 		_isStoppingAll = false;
 		_timeLast = now;
+		
+		playQueuedSounds();
 	}
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -268,18 +330,23 @@ class AudioSprite extends EventDispatcher
 		item.func = null;
 		item.args = null;
 	}
-	
-	public function loadFromEmbedded(jsonClass:Class<ByteArray>, mp3Class:Class<ByteArray>) 
-	{
-		var jsonData:ByteArray = Type.createEmptyInstance(jsonClass);
-		var jsonStr = jsonData.readUTFBytes(jsonData.length);
-		var mp3Data = Type.createEmptyInstance(mp3Class);
-		var mp3Sound = new Sound();
-		
-		mp3Sound.loadCompressedDataFromByteArray( mp3Data, mp3Data.length );
-		
-		loadFromDataAndSound(jsonStr, mp3Sound);
-	}
+}
+
+typedef VoidFunc = Void->Void;
+typedef MapTimers = Map<Timer, CallLaterItem>;
+typedef MapSound = Map<String, Sound>;
+typedef ArrayChannels = Array<AudioSpriteChannel>;
+typedef ArraySprites = Array<AudioSpriteItem>;
+typedef MapItems = Map<String, AudioSpriteItem>;
+typedef MapChannels = Map<String, ArrayChannels>;
+typedef SpriteData = {
+	start:Float,
+	end:Float,
+	loop:Bool
+}
+typedef CallLaterItem = {
+	func:Dynamic,
+	args:Array<Dynamic>
 }
 
 private class AudioSpriteItem {
@@ -296,7 +363,6 @@ private class AudioSpriteChannel {
 	public var channel:SoundChannel;
 	public var startedAt:Float = 0;
 	public var endAt:Float = 0;
-	public var loopAt:Float = 0;
 	
 	public function new() { }
 	
@@ -306,5 +372,35 @@ private class AudioSpriteChannel {
 		channel = null;
 		sprite = null;
 		trace("Sound destroyed.");
+	}
+}
+
+class AudioNavigator {
+	var _owner:AudioSprite;
+	var _ids:Array<String>;
+	var _currentIndex:Int = -1;
+	var _currentID:String;
+	
+	public function new( owner:AudioSprite ) {
+		_owner = owner;
+		_ids = owner.getSoundIDs();
+		trace(_currentIndex);
+	}
+	
+	function playCurrentID() {
+		_currentID = _ids[_currentIndex];
+		_owner.play( _currentID );
+	}
+	
+	public function playNext() {
+		_currentIndex++;
+		if (_currentIndex >= _ids.length) _currentIndex = 0;
+		playCurrentID();
+	}
+	
+	public function playPrev() {
+		_currentIndex--;
+		if (_currentIndex < 0) _currentIndex = _ids.length - 1;
+		playCurrentID();
 	}
 }
