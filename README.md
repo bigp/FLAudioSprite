@@ -1,5 +1,14 @@
 # FLAudioSprite
-An AudioSprite implementation for Flash, written in Haxe
+An AudioSprite implementation for Flash, written in Haxe.
+
+This project relies on content published with the AudioSprite tool found here:
+[tonistiigi/audiosprite](https://github.com/tonistiigi/audiosprite)
+
+Essentially, AudioSprite is a collection of all your sounds combined into one MP3 / OGG (or other format) that has each clip's name, start-time and end-time catalogued in a JSON file.
+
+There are a few existing HTML5 implementations out there, but none that I could find for Flash.
+
+So here it is!
 
 Usage Demo
 ------------------
