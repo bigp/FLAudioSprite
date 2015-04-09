@@ -26,10 +26,6 @@ class Main
 		audspr = new AudioSprite();
 		audspr.loadFromEmbedded(ExampleJSON, ExampleMP3);
 		audspr.play("Wobble");
-		
-		//callLater(2000, function() { as.play("trackloop"); } );
-		//callLater(3000, function() { as.stopAll(); } );
-		//callLater(3200, function() { as.play("trackloop2"); } );
 	}
 	
 	static private function onClick(e:MouseEvent):Void  {

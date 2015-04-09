@@ -182,10 +182,8 @@ class AudioSprite extends EventDispatcher
 			var sampleBytes = new ByteArray();
 			var samplesTotal:UInt = cast(sprite.duration * sampleRate + goldenDuration);
 			var samplesStart:UInt = cast(sprite.start * sampleRate + goldenOffset);
-			sampleBytes.endian = Endian.BIG_ENDIAN;
 			
 			_sound.extract(sampleBytes, samplesTotal, samplesStart);
-			sampleBytes.endian = Endian.BIG_ENDIAN;
 			
 			sampleBytes.position = 0;
 			loop.loadPCMFromByteArray(sampleBytes, samplesTotal, "float", true);
